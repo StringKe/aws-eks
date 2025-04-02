@@ -1,0 +1,80 @@
+# 保持 hostNetwork 以优化大型集群性能
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+# 服务配置
+service:
+  parsersFiles:
+    - /fluent-bit/parsers/parsers.conf
+  extraParsers: |
+    [PARSER]
+        Name    kubernetes
+        Format  regex
+        Regex   ^(?<namespace_name>[^_]+)\.(?<container_name>.+)\.(?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)\.(?<docker_id>[a-z0-9]{64})-$
+
+# 输入配置
+input:
+  name: "tail"
+  enabled: true
+  tag: "kube.<namespace_name>.<container_name>.<pod_name>.<docker_id>-"
+  path: "/var/log/containers/*.log"
+  db: "/var/log/flb_kube.db"
+  memBufLimit: 5MB
+  skipLongLines: "On"
+  refreshInterval: 10
+  extraInputs: |
+    multiline.parser  docker, cri
+    Tag_Regex         (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-(?<docker_id>[a-z0-9]{64})\.log$
+
+# 过滤器配置
+filter:
+  name: "kubernetes"
+  match: "kube.*"
+  kubeURL: "https://kubernetes.default.svc.cluster.local:443"
+  mergeLog: "On"
+  mergeLogKey: "log_processed"
+  keepLog: "On"
+  k8sLoggingParser: "On"
+  k8sLoggingExclude: "Off"
+  bufferSize: "0"
+  extraFilters: |
+    Kube_Tag_Prefix     kube.
+    Regex_Parser        kubernetes
+    Labels              On
+    Annotations         On
+    Use_Kubelet         true
+    Kubelet_Port        10250
+    Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+
+# 禁用 cloudwatch 插件（使用高性能的 cloudWatchLogs 插件代替）
+cloudWatch:
+  enabled: false
+
+# 启用 CloudWatch Logs 插件
+cloudWatchLogs:
+  enabled: true
+  match: "kube.*"
+  region: ${region}
+  logGroupName: ${cloudwatch_log_group}
+  logStreamPrefix: "${cluster_name}-"
+  autoCreateGroup: false
+  extraOutputs: |
+    log_key               log
+    log_format            json
+
+# 资源配置
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1500Mi
+  requests:
+    cpu: 500m
+    memory: 500Mi
+
+# 优先级类名
+priorityClassName: system-node-critical
+
+# 容忍所有节点污点
+tolerations:
+  - operator: Exists

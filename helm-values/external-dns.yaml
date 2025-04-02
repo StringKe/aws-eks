@@ -1,0 +1,4 @@
+txtOwnerId: ${txtOwnerId}
+domainFilters: ${jsonencode(domainFilter)}
+policy: "sync"
+logLevel: "debug"
